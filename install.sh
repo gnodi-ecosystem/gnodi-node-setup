@@ -12,10 +12,18 @@ warn()    { echo -e "${YELLOW}[gnodi]${NC} $*"; }
 error()   { echo -e "${RED}[gnodi]${NC} $*"; exit 1; }
 
 # ── Requirements ──────────────────────────────────────────────────────────────
-for cmd in curl jq systemctl; do
-    command -v "$cmd" &>/dev/null || error "Required command not found: $cmd. Install it and retry."
-done
 [ "$(id -u)" -eq 0 ] || error "Run this script as root (sudo bash install.sh)"
+command -v systemctl &>/dev/null || error "systemd is required but not found."
+
+MISSING_PKGS=()
+command -v curl &>/dev/null || MISSING_PKGS+=(curl)
+command -v jq   &>/dev/null || MISSING_PKGS+=(jq)
+
+if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+    info "Installing dependencies: ${MISSING_PKGS[*]}..."
+    apt-get update -q && apt-get install -y "${MISSING_PKGS[@]}" > /dev/null \
+        || error "Failed to install dependencies. Run: apt-get install ${MISSING_PKGS[*]}"
+fi
 
 # ── License key ───────────────────────────────────────────────────────────────
 if [ -f "$AGENT_DIR/license.key" ]; then
