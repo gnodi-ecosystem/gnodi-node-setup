@@ -13,7 +13,7 @@ CHAIN_ID="gnodi"
 EVM_CHAIN_ID="46634"
 MIN_GAS_PRICES="0.025uGNOD"
 GENESIS_URL="https://raw.githubusercontent.com/gnodi-network/genesis-mainnet/refs/heads/main/genesis.json"
-PERSISTENT_PEERS="0b48b7b3bb2de711ada54443019fa9515923f971@5.181.187.92:26656,cd0f4a3e82fa723b5b2d41480d72b0488b49ef34@146.190.38.60:26656,55bb9b88bcfdd0de814426c024550b2599ae43c6@peer-gnodi.vinjan-inc.com:15556,bcb16dfcd95231daab38ded083cf45dcc3ae10cd@95.179.228.178:26656,c237bcad9587d10ca40b2ee05ba39cd2bb3233b1@136.244.68.113:26656,c72dc355777620c921f366930b15d24bd59a6f08@104.131.187.84:26656,8b38dc7bb9e096face3ab373d60df325aa9a8740@138.197.94.128:26656,e70fce3e88a1e424a6bca87773aaa84973fc6f8b@66.135.1.129:26656,fc44ae9ef5f31054ae214937ffc31cdd67253a7d@34.106.124.233:26656,586608440e8e6467762171669b2941b04a1ffec2@143.198.145.52:26656,aa0cd1a0f2f96991cbf4eaeee64ef5e5df262520@45.32.191.225:26656,057bdba2fb6f5ed8db425ce9c13cbd52b9c58211@64.176.167.20:26656,dc36d11c7925b4d7ea6599b275b8249c0b8b702e@164.90.153.250:26656,714349afc6b324ea507f673ca2de36617bb7063d@66.135.6.31:26656,eec2411e1fba12dd3c12b2226c2c4f00070c1588@164.92.83.118:26656,210328f91de1bb110d6d8a4906a3810fe35f09c7@34.106.214.74:26656"
+PERSISTENT_PEERS="0b48b7b3bb2de711ada54443019fa9515923f971@5.181.187.92:26656,2c9ce27887a88852fa6f98c91262e3b223f19a16@206.189.237.204:26656,cd0f4a3e82fa723b5b2d41480d72b0488b49ef34@146.190.38.60:26656,55bb9b88bcfdd0de814426c024550b2599ae43c6@peer-gnodi.vinjan-inc.com:15556,bcb16dfcd95231daab38ded083cf45dcc3ae10cd@95.179.228.178:26656,c237bcad9587d10ca40b2ee05ba39cd2bb3233b1@136.244.68.113:26656,c72dc355777620c921f366930b15d24bd59a6f08@104.131.187.84:26656,8b38dc7bb9e096face3ab373d60df325aa9a8740@138.197.94.128:26656,e70fce3e88a1e424a6bca87773aaa84973fc6f8b@66.135.1.129:26656,fc44ae9ef5f31054ae214937ffc31cdd67253a7d@34.106.124.233:26656,586608440e8e6467762171669b2941b04a1ffec2@143.198.145.52:26656,aa0cd1a0f2f96991cbf4eaeee64ef5e5df262520@45.32.191.225:26656,057bdba2fb6f5ed8db425ce9c13cbd52b9c58211@64.176.167.20:26656,dc36d11c7925b4d7ea6599b275b8249c0b8b702e@164.90.153.250:26656,714349afc6b324ea507f673ca2de36617bb7063d@66.135.6.31:26656,eec2411e1fba12dd3c12b2226c2c4f00070c1588@164.92.83.118:26656,210328f91de1bb110d6d8a4906a3810fe35f09c7@34.106.214.74:26656"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[gnodi]${NC} $*"; }
@@ -131,17 +131,18 @@ if [ ! -f "$NODE_HOME/config/genesis.json" ]; then
     # ── State sync ────────────────────────────────────────────────────────────
     # Configures CometBFT state sync so the node catches up in minutes instead
     # of days. Trust height is set 1000 blocks behind the current tip.
-    SNAP_RPC="https://rpc.gnodi.nodestake.org"
-    info "Fetching state sync trust height from $SNAP_RPC..."
-    LATEST_HEIGHT=$(curl -sf "$SNAP_RPC/block" | jq -r '.result.block.header.height')
+    SNAP_RPC1="https://rpc.gnodi.nodestake.org"
+    SNAP_RPC2="https://rpc.gnodipowered.com"
+    info "Fetching state sync trust height from $SNAP_RPC1..."
+    LATEST_HEIGHT=$(curl -sf "$SNAP_RPC1/block" | jq -r '.result.block.header.height')
     BLOCK_HEIGHT=$((LATEST_HEIGHT - 1000))
-    TRUST_HASH=$(curl -sf "$SNAP_RPC/block?height=$BLOCK_HEIGHT" | jq -r '.result.block_id.hash')
+    TRUST_HASH=$(curl -sf "$SNAP_RPC1/block?height=$BLOCK_HEIGHT" | jq -r '.result.block_id.hash')
     info "State sync: trust height=$BLOCK_HEIGHT hash=${TRUST_HASH:0:16}..."
 
-    # Scope edits to the [statesync] section only to avoid touching other 'enable' fields
+    # Two independent RPC servers required for state sync trust verification
     sed -i '/^\[statesync\]/,/^\[/{
         s|^enable = .*|enable = true|
-        s|^rpc_servers = .*|rpc_servers = "'"$SNAP_RPC"','"$SNAP_RPC"'"|
+        s|^rpc_servers = .*|rpc_servers = "'"$SNAP_RPC1"','"$SNAP_RPC2"'"|
         s|^trust_height = .*|trust_height = '"$BLOCK_HEIGHT"'|
         s|^trust_hash = .*|trust_hash = "'"$TRUST_HASH"'"|
     }' "$NODE_HOME/config/config.toml"
