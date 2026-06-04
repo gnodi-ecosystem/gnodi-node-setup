@@ -27,6 +27,7 @@ command -v systemctl &>/dev/null || error "systemd is required but not found."
 MISSING_PKGS=()
 command -v curl &>/dev/null || MISSING_PKGS+=(curl)
 command -v jq   &>/dev/null || MISSING_PKGS+=(jq)
+command -v lz4  &>/dev/null || MISSING_PKGS+=(lz4)
 
 if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
     info "Installing dependencies: ${MISSING_PKGS[*]}..."
@@ -126,6 +127,31 @@ if [ ! -f "$NODE_HOME/config/genesis.json" ]; then
         "$NODE_HOME/config/app.toml"
     sed -i 's|^pruning-interval = .*|pruning-interval = "100"|' \
         "$NODE_HOME/config/app.toml"
+
+    # ── State sync ────────────────────────────────────────────────────────────
+    # Configures CometBFT state sync so the node catches up in minutes instead
+    # of days. Trust height is set 1000 blocks behind the current tip.
+    SNAP_RPC="https://rpc.gnodi.nodestake.org"
+    info "Fetching state sync trust height from $SNAP_RPC..."
+    LATEST_HEIGHT=$(curl -sf "$SNAP_RPC/block" | jq -r '.result.block.header.height')
+    BLOCK_HEIGHT=$((LATEST_HEIGHT - 1000))
+    TRUST_HASH=$(curl -sf "$SNAP_RPC/block?height=$BLOCK_HEIGHT" | jq -r '.result.block_id.hash')
+    info "State sync: trust height=$BLOCK_HEIGHT hash=${TRUST_HASH:0:16}..."
+
+    # Scope edits to the [statesync] section only to avoid touching other 'enable' fields
+    sed -i '/^\[statesync\]/,/^\[/{
+        s|^enable = .*|enable = true|
+        s|^rpc_servers = .*|rpc_servers = "'"$SNAP_RPC"','"$SNAP_RPC"'"|
+        s|^trust_height = .*|trust_height = '"$BLOCK_HEIGHT"'|
+        s|^trust_hash = .*|trust_hash = "'"$TRUST_HASH"'"|
+    }' "$NODE_HOME/config/config.toml"
+
+    # Download wasm state — not included in state sync snapshots
+    info "Downloading wasm state..."
+    rm -rf "$NODE_HOME/wasm"
+    curl -o - -L "https://ss.gnodi.nodestake.org/wasm.tar.lz4" \
+        | lz4 -dc - | tar -xf - -C "$NODE_HOME" \
+        || warn "Wasm download failed — node may need manual wasm restore if EVM fails to start."
 
     info "Node initialized."
 else
