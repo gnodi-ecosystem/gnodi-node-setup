@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Constants ─────────────────────────────────────────────────────────────────
 API_BASE="https://api.gnodiservices.com"
 AGENT_DIR="/opt/gnodi-agent"
 GNODID_BIN="/usr/local/bin/gnodid"
+NODES_BASE_DIR="/var/lib/gnodi-nodes"
 SERVICE_NAME="gnodi-agent"
 
+# Chain configuration
+CHAIN_ID="gnodi"
+EVM_CHAIN_ID="46634"
+MIN_GAS_PRICES="0.025uGNOD"
+GENESIS_URL="https://raw.githubusercontent.com/gnodi-network/genesis-mainnet/refs/heads/main/genesis.json"
+PERSISTENT_PEERS="cd0f4a3e82fa723b5b2d41480d72b0488b49ef34@146.190.38.60:26656,55bb9b88bcfdd0de814426c024550b2599ae43c6@peer-gnodi.vinjan-inc.com:15556"
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-info()    { echo -e "${GREEN}[gnodi]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[gnodi]${NC} $*"; }
-error()   { echo -e "${RED}[gnodi]${NC} $*"; exit 1; }
+info()  { echo -e "${GREEN}[gnodi]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[gnodi]${NC} $*"; }
+error() { echo -e "${RED}[gnodi]${NC} $*"; exit 1; }
 
 # ── Requirements ──────────────────────────────────────────────────────────────
 [ "$(id -u)" -eq 0 ] || error "Run this script as root (sudo bash install.sh)"
@@ -44,7 +53,7 @@ fi
 info "Fetching current node version..."
 VERSION_JSON=$(curl -sf "$API_BASE/nodes/version") || error "Could not reach $API_BASE. Check your connection."
 GNODID_VERSION=$(echo "$VERSION_JSON" | jq -r '.version')
-DOWNLOAD_URL=$(echo "$VERSION_JSON"  | jq -r '.downloadUrl')
+DOWNLOAD_URL=$(echo "$VERSION_JSON"   | jq -r '.downloadUrl')
 [ -n "$GNODID_VERSION" ] || error "No version info returned from server."
 
 # ── Install gnodid ────────────────────────────────────────────────────────────
@@ -75,22 +84,94 @@ if [ "$HTTP_CODE" != "200" ]; then
     error "Activation failed ($HTTP_CODE): $MSG"
 fi
 
-MEMBER_ID=$(echo "$BODY"   | jq -r '.memberId')
+MEMBER_ID=$(echo "$BODY"    | jq -r '.memberId')
 LICENSE_TYPE=$(echo "$BODY" | jq -r '.licenseType')
 info "Activated! Member: $MEMBER_ID | License: $LICENSE_TYPE"
 
-# ── Install agent ─────────────────────────────────────────────────────────────
+# ── Node home directory ───────────────────────────────────────────────────────
+# Derive a stable, filesystem-safe node ID from the license key.
+# Uses first 16 alphanumeric chars (lowercase) — unique per key, stable across reinstalls.
+NODE_ID=$(echo "$LICENSE_KEY" | tr -dc 'A-Za-z0-9' | tr '[:upper:]' '[:lower:]' | head -c 16)
+NODE_HOME="$NODES_BASE_DIR/$NODE_ID"
+MONIKER="gnodi-$NODE_ID"
+
+info "Node home: $NODE_HOME"
+mkdir -p "$NODE_HOME"
+
+# ── Initialize chain (once per node) ──────────────────────────────────────────
+if [ ! -f "$NODE_HOME/config/genesis.json" ]; then
+    info "Initializing node for Gnodi mainnet..."
+    "$GNODID_BIN" init "$MONIKER" --chain-id "$CHAIN_ID" --home "$NODE_HOME" > /dev/null
+
+    info "Downloading genesis..."
+    curl -fsSL "$GENESIS_URL" -o "$NODE_HOME/config/genesis.json" \
+        || error "Failed to download genesis from $GENESIS_URL"
+
+    info "Configuring peers..."
+    sed -i "s|^persistent_peers = .*|persistent_peers = \"$PERSISTENT_PEERS\"|" \
+        "$NODE_HOME/config/config.toml"
+
+    info "Configuring app settings..."
+    sed -i "s|^minimum-gas-prices = .*|minimum-gas-prices = \"$MIN_GAS_PRICES\"|" \
+        "$NODE_HOME/config/app.toml"
+
+    # Enable Prometheus metrics endpoint (localhost:26660)
+    sed -i 's|^prometheus = false|prometheus = true|' \
+        "$NODE_HOME/config/config.toml"
+
+    # Pruning: keep last 100k blocks, prune every 100 — balances disk use vs. query range
+    sed -i 's|^pruning = .*|pruning = "custom"|' \
+        "$NODE_HOME/config/app.toml"
+    sed -i 's|^pruning-keep-recent = .*|pruning-keep-recent = "100000"|' \
+        "$NODE_HOME/config/app.toml"
+    sed -i 's|^pruning-interval = .*|pruning-interval = "100"|' \
+        "$NODE_HOME/config/app.toml"
+
+    info "Node initialized."
+else
+    info "Node already initialized at $NODE_HOME — skipping chain init."
+fi
+
+# ── Save agent state ──────────────────────────────────────────────────────────
 mkdir -p "$AGENT_DIR"
 echo "$LICENSE_KEY" > "$AGENT_DIR/license.key"
 chmod 600 "$AGENT_DIR/license.key"
+echo "$NODE_HOME" > "$AGENT_DIR/node.home"
+echo "$NODE_ID"   > "$AGENT_DIR/node.id"
 
+# ── Install agent script ──────────────────────────────────────────────────────
 AGENT_SCRIPT="$AGENT_DIR/gnodi-agent.sh"
 AGENT_URL="https://raw.githubusercontent.com/gnodi-ecosystem/gnodi-node-setup/main/gnodi-agent.sh"
 info "Installing gnodi-agent..."
 curl -fsSL "$AGENT_URL" -o "$AGENT_SCRIPT" || error "Failed to download gnodi-agent.sh"
 chmod +x "$AGENT_SCRIPT"
 
-# ── Systemd service + timer ───────────────────────────────────────────────────
+# ── Systemd: gnodid node service ──────────────────────────────────────────────
+info "Creating gnodid systemd service..."
+cat > /etc/systemd/system/gnodid.service <<EOF
+[Unit]
+Description=Gnodi Node ($NODE_ID)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$GNODID_BIN start \\
+    --chain-id $CHAIN_ID \\
+    --evm.evm-chain-id $EVM_CHAIN_ID \\
+    --minimum-gas-prices $MIN_GAS_PRICES \\
+    --home $NODE_HOME
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# ── Systemd: gnodi-agent heartbeat timer ──────────────────────────────────────
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=Gnodi Node Agent
@@ -119,17 +200,30 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
+systemctl enable gnodid
 systemctl enable --now "${SERVICE_NAME}.timer"
 
-# ── Run first heartbeat immediately ───────────────────────────────────────────
+# ── Start gnodid ──────────────────────────────────────────────────────────────
+info "Starting gnodid..."
+systemctl start gnodid
+
+# ── Run first heartbeat ───────────────────────────────────────────────────────
 info "Sending initial heartbeat..."
-systemctl start "${SERVICE_NAME}.service" && info "Heartbeat sent." || warn "Heartbeat failed — will retry tomorrow."
+systemctl start "${SERVICE_NAME}.service" \
+    && info "Heartbeat sent." \
+    || warn "Heartbeat failed — will retry tomorrow."
 
 echo ""
 info "Setup complete!"
 echo "  gnodid version : $GNODID_VERSION"
 echo "  Member ID      : $MEMBER_ID"
 echo "  License type   : $LICENSE_TYPE"
+echo "  Node ID        : $NODE_ID"
+echo "  Node home      : $NODE_HOME"
+echo "  Chain          : $CHAIN_ID (EVM chain ID: $EVM_CHAIN_ID)"
 echo "  Heartbeat      : daily at 00:30 UTC (±1h jitter)"
 echo ""
-info "Start the node: gnodid start"
+info "Useful commands:"
+echo "  Status  : systemctl status gnodid"
+echo "  Logs    : journalctl -u gnodid -f"
+echo "  Sync    : $GNODID_BIN status --home $NODE_HOME | jq .sync_info"
