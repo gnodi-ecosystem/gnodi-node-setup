@@ -111,27 +111,6 @@ info "Installing gnodi-agent..."
 curl -fsSL "$AGENT_URL" -o "$AGENT_SCRIPT" || error "Failed to download gnodi-agent.sh"
 chmod +x "$AGENT_SCRIPT"
 
-# ── Systemd: gnodid node service ──────────────────────────────────────────────
-info "Creating gnodid systemd service..."
-cat > /etc/systemd/system/gnodid.service <<EOF
-[Unit]
-Description=Gnodi Node ($NODE_ID)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=$GNODID_BIN start --home $NODE_HOME --minimum-gas-prices 0.025uGNOD
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 # ── Systemd: gnodi-agent heartbeat timer ──────────────────────────────────────
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
@@ -161,12 +140,7 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
-systemctl enable gnodid
 systemctl enable --now "${SERVICE_NAME}.timer"
-
-# ── Start gnodid ──────────────────────────────────────────────────────────────
-info "Starting gnodid..."
-systemctl start gnodid
 
 # ── Run first heartbeat ───────────────────────────────────────────────────────
 info "Sending initial heartbeat..."
@@ -184,5 +158,5 @@ echo "  Node home      : $NODE_HOME"
 echo "  Heartbeat      : daily at 00:30 UTC (±1h jitter)"
 echo ""
 info "Useful commands:"
-echo "  Status  : systemctl status gnodid"
-echo "  Logs    : journalctl -u gnodid -f"
+echo "  Heartbeat logs : journalctl -u gnodi-agent -f"
+echo "  Timer status   : systemctl status gnodi-agent.timer"
