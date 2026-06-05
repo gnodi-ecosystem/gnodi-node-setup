@@ -15,26 +15,31 @@ CURRENT_VERSION=$("$GNODID_BIN" version 2>/dev/null | head -1 || echo "unknown")
 
 # ── Collect node metrics ───────────────────────────────────────────────────────
 BLOCK_HEIGHT="0"
-CATCHING_UP="unknown"
+CATCHING_UP=""
 NUM_PEERS="0"
 
 if [ -f "$HOME_FILE" ]; then
     NODE_HOME=$(cat "$HOME_FILE")
     STATUS_JSON=$("$GNODID_BIN" status --home "$NODE_HOME" 2>/dev/null || echo "{}")
     BLOCK_HEIGHT=$(echo "$STATUS_JSON" | jq -r '.sync_info.latest_block_height // "0"' 2>/dev/null || echo "0")
-    CATCHING_UP=$(echo "$STATUS_JSON"  | jq -r '.sync_info.catching_up // "unknown"' 2>/dev/null || echo "unknown")
+    CATCHING_UP=$(echo "$STATUS_JSON"  | jq -r '.sync_info.catching_up // ""' 2>/dev/null || echo "")
     NUM_PEERS=$(curl -sf "http://localhost:26657/net_info" 2>/dev/null \
         | jq -r '.result.n_peers // "0"' 2>/dev/null || echo "0")
 fi
 
 # ── Heartbeat ─────────────────────────────────────────────────────────────────
-log "Sending heartbeat (version: $CURRENT_VERSION, block: $BLOCK_HEIGHT, syncing: $CATCHING_UP, peers: $NUM_PEERS)..."
+log "Sending heartbeat (version: $CURRENT_VERSION, block: $BLOCK_HEIGHT, syncing: ${CATCHING_UP:-n/a}, peers: $NUM_PEERS)..."
+
+HEARTBEAT_HEADERS=(
+    -H "X-LICENSE-KEY: $LICENSE_KEY"
+    -H "X-NODE-VERSION: $CURRENT_VERSION"
+    -H "X-BLOCK-HEIGHT: $BLOCK_HEIGHT"
+    -H "X-NUM-PEERS: $NUM_PEERS"
+)
+[ -n "$CATCHING_UP" ] && HEARTBEAT_HEADERS+=(-H "X-CATCHING-UP: $CATCHING_UP")
+
 RESPONSE=$(curl -sf -X POST "$API_BASE/nodes/heartbeat" \
-    -H "X-LICENSE-KEY: $LICENSE_KEY" \
-    -H "X-NODE-VERSION: $CURRENT_VERSION" \
-    -H "X-BLOCK-HEIGHT: $BLOCK_HEIGHT" \
-    -H "X-CATCHING-UP: $CATCHING_UP" \
-    -H "X-NUM-PEERS: $NUM_PEERS") || { log "Heartbeat request failed."; exit 1; }
+    "${HEARTBEAT_HEADERS[@]}") || { log "Heartbeat request failed."; exit 1; }
 
 RECORDED=$(echo "$RESPONSE"       | jq -r '.recorded')
 POINTS=$(echo "$RESPONSE"         | jq -r '.points')

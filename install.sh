@@ -121,7 +121,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$GNODID_BIN start --home $NODE_HOME
+ExecStart=$GNODID_BIN start --home $NODE_HOME --minimum-gas-prices 0.025uGNOD
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
