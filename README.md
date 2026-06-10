@@ -12,7 +12,7 @@ You will be prompted for your license key during setup. Your license key is visi
 
 ## Transitioning an Existing Node
 
-If you are already running a Gnodi node, run the same command:
+If you previously installed a Gnodi node, run the same command:
 
 ```bash
 sudo bash <(curl -s https://raw.githubusercontent.com/gnodi-ecosystem/gnodi-node-setup/main/install.sh)
@@ -20,18 +20,15 @@ sudo bash <(curl -s https://raw.githubusercontent.com/gnodi-ecosystem/gnodi-node
 
 The script is safe to run on an existing node. It will:
 
-- Skip the `gnodid` download if you are already on the latest version
-- Register your license key with the new system
-- Install the `gnodi-agent` service for daily heartbeat reporting
-
-Your node will continue running uninterrupted during the process.
+- Automatically remove the legacy `gnodid` binary and node data directory
+- Register your license key with the updated agent
+- Reconfigure the `gnodi-agent` systemd service
 
 ## What Gets Installed
 
 | Component | Description |
 |-----------|-------------|
-| `gnodid` | The Gnodi blockchain node binary |
-| `gnodi-agent` | A daily systemd service that sends your heartbeat and auto-updates `gnodid` when new versions are available |
+| `gnodi-agent` | A lightweight daily systemd service that sends your heartbeat to the Gnodi network |
 
 ## Requirements
 
